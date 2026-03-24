@@ -1,73 +1,95 @@
-import { Request, Response } from "express";
+import { Request, Response,NextFunction  } from "express";
 import bcrypt from "bcryptjs";
-import { User } from "../models/user-models";
-import {
-  generateAccessToken,
-  generateRefreshToken,
-} from "../utils/AccessTokenAndRefreshToken";
+import { User } from "../models/user-model";
+import { generateAccessTokenAndRefreshToken } from "../utils/generateAccessTokenAndRefreshToken";
 import { generateQR } from "../utils/qr";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
-import { validationResult } from "express-validator";
 
-export const signup = async (req: Request, res: Response) => {
-  try {
-    const errors = validationResult(req);
+export const signup = async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+    try {
+        const { email, password } = req.body;
 
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        errors: errors.array(),
-      });
+        // Check karo ke sab fields filled hain
+        if ([email, password].some((field) => !field?.trim())) {
+            return res.status(400).json({ status: 400, message: "Sab fields required hain" });
+        }
+
+        // User create karo
+        const user = await User.create({ email, password });
+
+        // Tokens generate karo
+        const { accessToken, refreshToken } = await generateAccessTokenAndRefreshToken(user._id.toString());
+
+        // Refresh token DB mein save karo
+        user.refreshToken = refreshToken;
+        await user.save();
+
+        // Tokens cookies mein bhejo
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 din
+        }).cookie("accessToken", accessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        const response = await User.findById(user._id).select("-password -__v");
+
+        return res.status(200).json({ status: 200, message: "User registered successfully", data: response });
+    } catch (error) {
+        return next(error);
     }
-
-    const { name, email, password } = req.body;
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "Email already registered" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    const user = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-    });
-
-    const accessToken = generateAccessToken(user._id.toString());
-    const refreshToken = generateRefreshToken(user._id.toString());
-
-    res.status(201).json({
-      message: "User registered successfully",
-      user,
-      accessToken,
-      refreshToken,
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Signup failed" });
-  }
-}; 
+};
 
 // LOGIN
-export const login = async (req: Request, res: Response) => {
-  try {
-    const { email, password } = req.body;
+export const loginUser = async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+    try {
+        const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
-    if (!user)
-      return res.status(400).json({ message: "User not found" });
+        if (!email || !password) {
+            return res.status(400).json({ status: 400, message: "Email and password are required" });
+        }
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch)
-      return res.status(400).json({ message: "Invalid credentials" });
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(404).json({ status: 404, message: "User not found" });
+        }
 
-    const accessToken = generateAccessToken(user._id.toString());
-    const refreshToken = generateRefreshToken(user._id.toString());
+        const isPasswordValid = await user.isPasswordCorrect(password);
+        if(!isPasswordValid){
+            return res.status(401).json({ status: 401, message: "Invalid credentials"});
+        }
 
-    res.json({ user, accessToken, refreshToken });
+        const { accessToken, refreshToken } =
+      await generateAccessTokenAndRefreshToken(user._id.toString());
+
+      const loggedInUser = await User.findById(user._id).select("-password -__v");
+
+      res
+      .cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      })
+      .cookie("accessToken", accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      });
+
+    return res.status(200).json({
+      status: 200,
+      message: "Login successful",
+      data: loggedInUser,
+    });
+
   } catch (error) {
-    res.status(500).json({ message: "Login failed" });
+    return next(error);
   }
 };
 
@@ -77,14 +99,13 @@ export const forgetPassword = async (req: Request, res: Response) => {
     const { email } = req.body;
 
     const user = await User.findOne({ email });
-    if (!user)
-      return res.status(400).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     const resetToken = jwt.sign(
-      { id: user._id },
-      process.env.JWT_SECRET as string,
-      { expiresIn: "15m" }
-    );
+  { id: user._id },
+  process.env.JWT_ACCESS_TOKEN_SECRET!,
+  { expiresIn: "15m" }
+);
 
     const transporter = nodemailer.createTransport({
       service: "gmail",
@@ -98,11 +119,12 @@ export const forgetPassword = async (req: Request, res: Response) => {
       from: process.env.EMAIL_USER,
       to: email,
       subject: "Password Reset",
-      text: `Reset link: http://localhost:5173/reset-password/${resetToken}`,
+      text: `Reset link: http://localhost:3000/forgot-password/${resetToken}`,
     });
 
-    res.json({ message: "Reset email sent" });
+    res.status(200).json({ message: "Reset email sent" });
   } catch (error) {
+    console.log(error);
     res.status(500).json({ message: "Error sending email" });
   }
 };
@@ -114,7 +136,7 @@ export const generateUserQR = async (req: Request, res: Response) => {
 
     const qr = await generateQR(data);
 
-    res.json({ qr });
+    res.status(200).json({ status: 200, data: { qr } });
   } catch (error) {
     res.status(500).json({ message: "QR generation failed" });
   }
