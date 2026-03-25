@@ -1,32 +1,36 @@
 import { Request, Response } from "express";
 import { QRCode } from "../models/qrcode-model";
 import { nanoid } from "nanoid";
+import mongoose from "mongoose";
 
 
 export const generateQRCode = async (req: Request, res: Response) => {
   try {
     const { title, originalUrl, userId } = req.body;
 
-    if (!title || !originalUrl) {
-      return res.status(400).json({ message: "Title and URL are required" });
-    }
-
     const shortCode = nanoid(6);
 
     const qr = await QRCode.create({
-      title,
+      title: title || "My QR",
       originalUrl,
       shortCode,
-      // Only include userId if provided
-      ...(userId && { userId }),
+      userId: userId ? userId : new mongoose.Types.ObjectId(),
     });
+
+    // 🔥 YAHAN CHANGE HAI
+    const qrLink = `http://localhost:5000/api/qr/r/${shortCode}`;
 
     res.status(201).json({
       message: "QR Code generated successfully",
-      data: qr,
+      data: {
+        qrCode: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${qrLink}`,
+        shortLink: qrLink,
+        ...qr.toObject(),
+      },
     });
+
   } catch (error) {
-    console.error("QR Generation Error:", error);
+    console.log("QR Generation Error:", error);
     res.status(500).json({ message: "Error generating QR code", error });
   }
 };
@@ -95,5 +99,24 @@ export const deleteQRCode = async (req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(500).json({ message: "Error deleting QR code" });
+  }
+};
+
+export const redirectToOriginalUrl = async (req: Request, res: Response) => {
+  try {
+    const { code } = req.params;
+
+    const qr = await QRCode.findOne({ shortCode: code });
+
+    if (!qr) {
+      return res.status(404).send("QR not found");
+    }
+
+    // REDIRECT
+    return res.redirect(qr.originalUrl);
+
+  } catch (error) {
+    console.log("Redirect Error:", error);
+    return res.status(500).send("Server Error");
   }
 };

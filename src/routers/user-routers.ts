@@ -10,7 +10,7 @@ import { signupValidation } from "../middlewares/validation";
 const router = express.Router();
 
 router.post("/signup", signupValidation, signup);
-router.post("/login", loginUser);
+router.post("/signin", loginUser);
 router.post("/forgot-password", forgetPassword);
 router.post("/qr", generateUserQR);
 
