@@ -49,7 +49,7 @@ export const getScansByQrId = async (
   res: Response,
   next: NextFunction
 ): Promise<Response | void> => {
-  try {
+  try { 
 
     const { qrId } = req.params;
 

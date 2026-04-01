@@ -2,36 +2,44 @@ import { Request, Response } from "express";
 import { QRCode } from "../models/qrcode-model";
 import { nanoid } from "nanoid";
 import mongoose from "mongoose";
+import QRCodeLib from 'qrcode';
 
 
 export const generateQRCode = async (req: Request, res: Response) => {
   try {
     const { title, originalUrl, userId } = req.body;
-
     const shortCode = nanoid(6);
 
-    const qr = await QRCode.create({
+    const qrData = await QRCode.create({
       title: title || "My QR",
       originalUrl,
       shortCode,
-      userId: userId ? userId : new mongoose.Types.ObjectId(),
+      userId: userId || new mongoose.Types.ObjectId(),
     });
 
-    // 🔥 YAHAN CHANGE HAI
-    const qrLink = `http://localhost:5000/api/qr/r/${shortCode}`;
+    
+    const myIP = "192.168.10.245"; 
+    const qrLink = `http://${myIP}:5000/api/qr/r/${shortCode}`;
+
+    const qrImageBase64 = await QRCodeLib.toDataURL(qrLink, {
+      errorCorrectionLevel: 'H',
+      margin: 1,
+      width: 300
+    });
 
     res.status(201).json({
+      success: true,
       message: "QR Code generated successfully",
       data: {
-        qrCode: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${qrLink}`,
+        qrCode: qrImageBase64, // 👈 Ab ye image foran load hogi
         shortLink: qrLink,
-        ...qr.toObject(),
+        ...qrData.toObject(),
       },
     });
 
   } catch (error) {
     console.log("QR Generation Error:", error);
-    res.status(500).json({ message: "Error generating QR code", error });
+    res.status(500).json({ message: "Error generating QR code" });
   }
 };
 
@@ -112,9 +120,11 @@ export const redirectToOriginalUrl = async (req: Request, res: Response) => {
       return res.status(404).send("QR not found");
     }
 
-    // REDIRECT
-    return res.redirect(qr.originalUrl);
+    const originalUrl = qr.originalUrl.startsWith("http") 
+    ? qr.originalUrl 
+    : `https://${qr.originalUrl}`;
 
+return res.redirect(originalUrl);
   } catch (error) {
     console.log("Redirect Error:", error);
     return res.status(500).send("Server Error");
