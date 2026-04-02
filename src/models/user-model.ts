@@ -6,6 +6,8 @@ export interface IUser extends Document {
   email: string;
   password: string;
   refreshToken?: string | null;
+  forgotPasswordOtp : string | null;
+  forgotPasswordOtpExpiry : Date | null;
   comparePassword(candidatePassword: string): Promise<boolean>;
   isPasswordCorrect(password: string): Promise<boolean>;
   generateAccessToken(): string;
@@ -18,7 +20,6 @@ export interface IUser extends Document {
 
 const userSchema: Schema<IUser> = new mongoose.Schema(
   {
-     
     email: {
       type: String,
       required: true,
@@ -33,9 +34,19 @@ const userSchema: Schema<IUser> = new mongoose.Schema(
       type: String,
       default: null,
     },
-  },
+    forgotPasswordOtp: {
+      type: String,
+      default: null,
+    },
+    forgotPasswordOtpExpiry: {
+      type: Date,
+      default: null,
+    },
+  }, 
   { timestamps: true }
 );
+
+
 
 // 🔐 Hash password before saving
 userSchema.pre("save", async function (this: any) {
